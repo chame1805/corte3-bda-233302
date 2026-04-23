@@ -11,8 +11,15 @@ from ..domain.ports import AdminRepository, CachePort, CitaRepository, MascotaRe
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY_VACUNACION = "vacunacion_pendiente"
 CACHE_TTL_SECONDS = 300  # 5 minutos: balance entre frescura y carga en BD
+
+
+def cache_key_vacunacion(role: str, vet_id: int | None) -> str:
+    """
+    Key por rol+vet_id para evitar que la caché de un usuario
+    contamine los resultados de otro (cada vet ve sus mascotas vía RLS).
+    """
+    return f"vacunacion_pendiente:{role}:{vet_id or 'all'}"
 
 
 class BuscarMascotas:
@@ -48,25 +55,27 @@ class ObtenerVacunacionPendiente:
     Con 5 min de caché, una clínica con 50 consultas/hora solo golpea la BD
     una vez cada 5 minutos en lugar de 50 veces.
     Invalidación activa: se borra el caché cuando se aplica una vacuna nueva.
+    Key por rol+vet_id para que cada usuario tenga su propia entrada de caché.
     """
 
-    def __init__(self, repo: VacunaRepository, cache: CachePort):
+    def __init__(self, repo: VacunaRepository, cache: CachePort, key: str):
         self._repo = repo
         self._cache = cache
+        self._key = key
 
     def ejecutar(self) -> List[VacunaPendiente]:
-        cached = self._cache.get(CACHE_KEY_VACUNACION)
+        cached = self._cache.get(self._key)
         if cached:
-            logger.info("[CACHE HIT] vacunacion_pendiente — sirviendo desde Redis")
+            logger.info("[CACHE HIT] %s — sirviendo desde Redis", self._key)
             data = json.loads(cached)
             return [VacunaPendiente(**item) for item in data]
 
-        logger.info("[CACHE MISS] vacunacion_pendiente — consultando PostgreSQL")
+        logger.info("[CACHE MISS] %s — consultando PostgreSQL", self._key)
         resultado = self._repo.listar_pendientes()
 
         payload = json.dumps([vars(r) for r in resultado], default=str)
-        self._cache.set(CACHE_KEY_VACUNACION, payload, CACHE_TTL_SECONDS)
-        logger.info("[CACHE SET] vacunacion_pendiente — TTL=%ds", CACHE_TTL_SECONDS)
+        self._cache.set(self._key, payload, CACHE_TTL_SECONDS)
+        logger.info("[CACHE SET] %s — TTL=%ds", self._key, CACHE_TTL_SECONDS)
 
         return resultado
 
@@ -161,6 +170,7 @@ class AplicarVacuna:
         costo_cobrado: float,
     ) -> int:
         vacuna_id_nueva = self._repo.aplicar(mascota_id, vacuna_id, veterinario_id, costo_cobrado)
-        self._cache.delete(CACHE_KEY_VACUNACION)
-        logger.info("[CACHE INVALIDADO] vacunacion_pendiente — nueva vacuna aplicada a mascota_id=%d", mascota_id)
+        key = cache_key_vacunacion("veterinario", veterinario_id) if veterinario_id else cache_key_vacunacion("admin", None)
+        self._cache.delete(key)
+        logger.info("[CACHE INVALIDADO] %s — nueva vacuna aplicada a mascota_id=%d", key, mascota_id)
         return vacuna_id_nueva

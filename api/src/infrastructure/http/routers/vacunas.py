@@ -2,7 +2,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ....application.use_cases import AplicarVacuna, ObtenerVacunacionPendiente
+from ....application.use_cases import AplicarVacuna, ObtenerVacunacionPendiente, cache_key_vacunacion
 from ....infrastructure.db.connection import get_db
 from ....infrastructure.db.repositories import PostgresVacunaRepository
 from ..deps import get_cache, get_current_user, require_role
@@ -23,9 +23,10 @@ def vacunacion_pendiente(
     Cache key: 'vacunacion_pendiente'
     Invalidación: automática al aplicar una vacuna nueva.
     """
+    key = cache_key_vacunacion(user.role, user.vet_id)
     with get_db(user.role, user.vet_id) as conn:
         repo = PostgresVacunaRepository(conn)
-        use_case = ObtenerVacunacionPendiente(repo, cache)
+        use_case = ObtenerVacunacionPendiente(repo, cache, key)
         pendientes = use_case.ejecutar()
 
     return [

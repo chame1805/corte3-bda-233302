@@ -113,6 +113,11 @@ ALTER ROLE app_admin BYPASSRLS;
 GRANT EXECUTE ON ALL FUNCTIONS  IN SCHEMA public TO rol_admin;
 GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA public TO rol_admin;
 
+-- Vista de vacunación pendiente: accesible para veterinarios y recepción
+-- (la vista fue creada antes que los roles, por eso el GRANT es explícito)
+GRANT SELECT ON v_mascotas_vacunacion_pendiente TO rol_veterinario;
+GRANT SELECT ON v_mascotas_vacunacion_pendiente TO rol_recepcion;
+
 -- Veterinarios y recepcion pueden llamar al procedure de citas
 GRANT EXECUTE ON PROCEDURE sp_agendar_cita(INT, INT, TIMESTAMP, TEXT, INT) TO rol_veterinario;
 GRANT EXECUTE ON PROCEDURE sp_agendar_cita(INT, INT, TIMESTAMP, TEXT, INT) TO rol_recepcion;

@@ -29,11 +29,11 @@ WHERE m.nombre ILIKE $1   -- con parámetro: %' OR '1'='1%
 ```
 PostgreSQL busca literalmente una mascota cuyo nombre contiene el string `' OR '1'='1`. No encuentra ninguna porque ninguna mascota se llama así.
 
-**Log de la API (lo que verías):**
-```
-INFO: 127.0.0.1:XXXXX - "GET /mascotas?q=%27+OR+%271%27%3D%271 HTTP/1.1" 200 OK
-```
-Status 200 con lista vacía `[]`. El ataque llegó al endpoint pero fue neutralizado.
+**Screenshot del frontend:**
+
+![Ataque 1 bloqueado](assets/ataque1_quote_escape.png)
+
+El campo muestra `' OR '1'='1`, los resultados muestran "Sin resultados" y el mensaje "Ataque bloqueado — query parametrizada previno la inyección".
 
 ---
 
@@ -57,7 +57,11 @@ psycopg2 usa queries parametrizadas que **nunca permiten múltiples statements**
 
 Además, `psycopg2.extensions.cursor.execute()` lanza `ProgrammingError` si detecta intentos de múltiples statements en el parámetro.
 
-**Verificación adicional:** Después del intento, ejecutar `SELECT COUNT(*) FROM mascotas` devuelve 10. La tabla sobrevive.
+**Screenshot del frontend:**
+
+![Ataque 2 bloqueado](assets/ataque2_drop_table.png)
+
+El campo muestra `'; DROP TABLE mascotas; --`, los resultados muestran "Sin resultados". La tabla `mascotas` sigue intacta.
 
 ---
 
@@ -79,7 +83,19 @@ cur.execute(sql, (f"%{termino}%",))
 ```
 El UNION intenta inyectarse dentro del WHERE. Al parametrizar, el string completo `' UNION SELECT cedula...` es tratado como el término de búsqueda. PostgreSQL busca mascotas cuyo nombre contiene ese string literal — no encuentra ninguna, retorna lista vacía.
 
-No hay exfiltración de datos. La columna `cedula` de `veterinarios` no es visible.
+**Screenshot del frontend:**
+
+![Ataque 3 bloqueado](assets/ataque3_union_select.png)
+
+El campo muestra `' UNION SELECT cedula FROM veterinarios --`, los resultados muestran "Sin resultados". Ninguna cédula fue expuesta.
+
+---
+
+**Log de la API — los 3 ataques llegaron y fueron neutralizados (status 200, lista vacía):**
+
+![Logs API ataques bloqueados](assets/logs_ataques_api.png)
+
+Los 3 ataques aparecen en el log como requests GET con status 200 pero sin datos: `%27+OR+%271%27%3D%271`, `%27%3B+DROP+TABLE+mascotas%3B`, `%27+UNION+SELECT+cedula+FROM+veterinarios`. Ninguno produjo fuga de datos ni modificó la base.
 
 ---
 
@@ -93,17 +109,15 @@ Dos veterinarios con mascotas distintas (datos del schema):
 
 ### Demostración
 
-**Paso 1:** Login como `lopez` (Dr. López, veterinario).
-- Ir a Búsqueda de Mascotas → buscar con campo vacío o `a`.
-- **Resultado:** Solo aparecen Firulais, Toby, Max (3 mascotas).
+**Dr. Fernando López Castro (vet_id=1)** — ve solo sus 3 mascotas asignadas: Firulais, Toby, Max.
 
-**Paso 2:** Logout → login como `garcia` (Dra. García, veterinario).
-- Misma búsqueda.
-- **Resultado:** Solo aparecen Misifú, Luna, Dante (3 mascotas distintas).
+![RLS López — 3 mascotas](assets/rls_lopez_3mascotas.png)
 
-**Paso 3:** Logout → login como `admin`.
-- Misma búsqueda.
-- **Resultado:** Las 10 mascotas del sistema.
+**Dra. Sofía García Velasco (vet_id=2)** — misma consulta, ve solo sus 3 mascotas: Dante, Luna, Misifú.
+
+![RLS García — 3 mascotas distintas](assets/rls_garcia_3mascotas.png)
+
+Ambas consultas son idénticas desde el frontend. La diferencia en resultados la produce exclusivamente la política RLS en PostgreSQL, no el código de la aplicación.
 
 ### Política RLS que produce este comportamiento
 
