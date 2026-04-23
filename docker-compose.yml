@@ -1,0 +1,84 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: clinica_postgres
+    environment:
+      POSTGRES_DB: clinica_vet
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_root_pass
+    volumes:
+      - ./schema_corte3.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./backend/01_procedures.sql:/docker-entrypoint-initdb.d/02_procedures.sql
+      - ./backend/02_triggers.sql:/docker-entrypoint-initdb.d/03_triggers.sql
+      - ./backend/03_views.sql:/docker-entrypoint-initdb.d/04_views.sql
+      - ./backend/04_roles_y_permisos.sql:/docker-entrypoint-initdb.d/05_roles.sql
+      - ./backend/05_rls.sql:/docker-entrypoint-initdb.d/06_rls.sql
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d clinica_vet"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Redis ──────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: clinica_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── API (FastAPI – Arquitectura Hexagonal) ─────────────────
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: clinica_api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: clinica_vet
+      DB_USER_VET: app_veterinario
+      DB_PASS_VET: VetPass2024!
+      DB_USER_REC: app_recepcion
+      DB_PASS_REC: RecPass2024!
+      DB_USER_ADM: app_admin
+      DB_PASS_ADM: AdmPass2024!
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: clinica_jwt_secret_change_in_production_2024
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: 480
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Frontend (React + Vite) ─────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: clinica_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pg_data:
